@@ -38,14 +38,42 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
-      - name: Prepare SSH key
+      - name: Debug Tailscale
+        shell: bash
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.VM_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan ${{ secrets.VM_TAILSCALE_IP }} >> ~/.ssh/known_hosts
+          set -euxo pipefail
+          tailscale version
+          tailscale status
+          tailscale ping -c 3 "${{ secrets.VM_TAILSCALE_IP }}" || true
+
+      - name: Prepare SSH key
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "${{ secrets.VM_SSH_KEY }}" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          timeout 20 ssh-keyscan -H "${{ secrets.VM_TAILSCALE_IP }}" >> "$HOME/.ssh/known_hosts"
+          chmod 644 "$HOME/.ssh/known_hosts"
+          ls -la "$HOME/.ssh"
+
+      - name: Test SSH
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ssh -i "$HOME/.ssh/id_ed25519" \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=15 \
+            "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_TAILSCALE_IP }}" \
+            "hostname && whoami"
 
       - name: Restart backend deployment
+        shell: bash
         run: |
-          ssh ${{ secrets.VM_SSH_USER }}@${{ secrets.VM_TAILSCALE_IP }} \
+          set -euxo pipefail
+          ssh -i "$HOME/.ssh/id_ed25519" \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=15 \
+            "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_TAILSCALE_IP }}" \
             "kubectl rollout restart deployment/backend-deployment && kubectl rollout status deployment/backend-deployment"

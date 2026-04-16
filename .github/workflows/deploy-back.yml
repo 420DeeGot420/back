@@ -1,4 +1,4 @@
-name: Build and deploy backend
+name: Deploy backend
 
 on:
   push:
@@ -6,24 +6,20 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push backend image
-        uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
@@ -31,47 +27,25 @@ jobs:
             deegot/gotback:latest
             deegot/gotback:${{ github.sha }}
 
-      - name: Connect to Tailscale
-        uses: tailscale/github-action@v3
+      - uses: tailscale/github-action@v3
         with:
           authkey: ${{ secrets.TS_AUTHKEY }}
 
-      - name: Debug Tailscale
+      - name: Prepare SSH
         shell: bash
         run: |
-          set -euxo pipefail
-          tailscale version
-          tailscale status
-          tailscale ping -c 3 "${{ secrets.VM_TAILSCALE_IP }}" || true
-
-      - name: Prepare SSH key
-        shell: bash
-        run: |
-          set -euxo pipefail
+          set -euo pipefail
           mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
           printf '%s\n' "${{ secrets.VM_SSH_KEY }}" > "$HOME/.ssh/id_ed25519"
           chmod 600 "$HOME/.ssh/id_ed25519"
-          timeout 20 ssh-keyscan -H "${{ secrets.VM_TAILSCALE_IP }}" >> "$HOME/.ssh/known_hosts"
-          chmod 644 "$HOME/.ssh/known_hosts"
-          ls -la "$HOME/.ssh"
+          ssh-keyscan -H "${{ secrets.VM_TAILSCALE_IP }}" >> "$HOME/.ssh/known_hosts"
 
-      - name: Test SSH
+      - name: Restart backend
         shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           ssh -i "$HOME/.ssh/id_ed25519" \
             -o StrictHostKeyChecking=yes \
-            -o ConnectTimeout=15 \
-            "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_TAILSCALE_IP }}" \
-            "hostname && whoami"
-
-      - name: Restart backend deployment
-        shell: bash
-        run: |
-          set -euxo pipefail
-          ssh -i "$HOME/.ssh/id_ed25519" \
-            -o StrictHostKeyChecking=yes \
-            -o ConnectTimeout=15 \
             "${{ secrets.VM_SSH_USER }}@${{ secrets.VM_TAILSCALE_IP }}" \
             "kubectl rollout restart deployment/backend-deployment && kubectl rollout status deployment/backend-deployment"
